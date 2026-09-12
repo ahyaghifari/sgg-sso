@@ -1,0 +1,43 @@
+{
+    "name": "syifa/keycloak-sso",
+    "description": "Login SSO Keycloak + resolver unit organisasi (departemen/divisi/dst) buat aplikasi Laravel internal Syifa Global Group. Pasang, isi config model, selesai.",
+    "type": "library",
+    "license": "proprietary",
+    "require": {
+        "php": "^8.2",
+        "illuminate/support": "^11.0|^12.0",
+        "illuminate/auth": "^11.0|^12.0",
+        "illuminate/http": "^11.0|^12.0",
+        "laravel/socialite": "^5.0",
+        "socialiteproviders/keycloak": "^5.0",
+        "socialiteproviders/manager": "^4.0"
+    },
+    "require-dev": {
+        "orchestra/testbench": "^9.0|^10.0",
+        "phpunit/phpunit": "^11.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Syifa\\KeycloakSso\\": "src/"
+        },
+        "files": [
+            "src/helpers.php"
+        ]
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Syifa\\KeycloakSso\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Syifa\\KeycloakSso\\KeycloakSsoServiceProvider"
+            ]
+        }
+    },
+    "config": {
+        "sort-packages": true
+    },
+    "minimum-stability": "stable"
+}

@@ -1,0 +1,137 @@
+<?php
+
+namespace Syifa\KeycloakSso\Tests;
+
+use Symfony\Component\HttpKernel\Exception\HttpException;
+use Syifa\KeycloakSso\Support\UserResolver;
+use Syifa\KeycloakSso\Tests\Fixtures\TestDepartment;
+use Syifa\KeycloakSso\Tests\Fixtures\TestDivision;
+use Syifa\KeycloakSso\Tests\Fixtures\TestGuardedUser;
+use Syifa\KeycloakSso\Tests\Fixtures\TestUser;
+
+class UserResolverTest extends TestCase
+{
+    protected function defineEnvironment($app): void
+    {
+        parent::defineEnvironment($app);
+
+        $app['config']->set('keycloak-sso.user', [
+            'model' => TestUser::class,
+            'sub_column' => 'keycloak_sub',
+            'match_by' => ['keycloak_sub', 'email'],
+            'provision' => false,
+            'fill' => null,
+            'active_check' => null,
+        ]);
+    }
+
+    public function test_matches_existing_user_by_sub(): void
+    {
+        $user = TestUser::create(['name' => 'Ahya', 'email' => 'a@x.com', 'keycloak_sub' => 'sub-1']);
+
+        $resolved = (new UserResolver)->resolve(['sub' => 'sub-1']);
+
+        $this->assertSame($user->id, $resolved->id);
+    }
+
+    public function test_falls_back_to_email_and_links_sub(): void
+    {
+        $user = TestUser::create(['name' => 'Ahya', 'email' => 'a@x.com']);
+
+        $resolved = (new UserResolver)->resolve(['sub' => 'sub-new', 'email' => 'a@x.com']);
+
+        $this->assertSame($user->id, $resolved->id);
+        $this->assertSame('sub-new', $resolved->fresh()->keycloak_sub);
+    }
+
+    public function test_unmatched_user_without_provision_is_rejected(): void
+    {
+        $this->expectException(HttpException::class);
+
+        (new UserResolver)->resolve(['sub' => 'ghost', 'email' => 'ghost@x.com']);
+    }
+
+    public function test_provision_creates_user_when_enabled(): void
+    {
+        config([
+            'keycloak-sso.user.provision' => true,
+            'keycloak-sso.user.fill' => fn (array $c, array $orgUnits) => ['name' => $c['name'], 'email' => $c['email']],
+        ]);
+
+        $resolved = (new UserResolver)->resolve(['sub' => 'sub-baru', 'name' => 'Budi', 'email' => 'budi@x.com']);
+
+        $this->assertSame('Budi', $resolved->name);
+        $this->assertSame('sub-baru', $resolved->keycloak_sub);
+    }
+
+    public function test_provision_assigns_org_unit_resolved_from_groups(): void
+    {
+        $department = TestDepartment::create(['name' => 'Keperawatan', 'keycloak_code' => 'rsu-bjb-keperawatan']);
+
+        config([
+            'keycloak-sso.user.provision' => true,
+            'keycloak-sso.user.fill' => fn (array $c, array $orgUnits) => [
+                'name' => $c['name'],
+                'email' => $c['email'],
+                'department_id' => $orgUnits['department']->first()?->id,
+            ],
+        ]);
+
+        $orgUnits = ['department' => collect([$department])];
+
+        $resolved = (new UserResolver)->resolve(
+            ['sub' => 'sub-baru', 'name' => 'Budi', 'email' => 'budi@x.com'],
+            $orgUnits,
+        );
+
+        $this->assertSame($department->id, $resolved->department_id);
+    }
+
+    public function test_provision_true_by_default_uses_fallback_fill_when_none_configured(): void
+    {
+        // Class default terpaket ini sengaja override ke provision=false; tes ini pastikan
+        // nilai bawaan package sendiri (config/keycloak-sso.php) memang true dan closure
+        // 'fill' dapat dikosongkan sepenuhnya — bukan asumsi dari override defineEnvironment().
+        config(['keycloak-sso.user.provision' => true, 'keycloak-sso.user.fill' => null]);
+
+        $department = TestDepartment::create(['name' => 'Keperawatan', 'keycloak_code' => 'rsu-bjb-keperawatan']);
+        $division = TestDivision::create(['name' => 'ICU', 'keycloak_code' => 'rsu-bjb-keperawatan-icu']);
+
+        $orgUnits = [
+            // Kolom tebakan 'department_id' ADA di skema/fillable TestUser — harus terisi.
+            'department' => collect([$department]),
+            // Kolom tebakan 'division_id' sengaja TIDAK ada di skema/fillable TestUser —
+            // harus diabaikan otomatis, bukan menimbulkan error.
+            'division' => collect([$division]),
+        ];
+
+        $resolved = (new UserResolver)->resolve(
+            ['sub' => 'sub-fallback', 'nip' => '12345', 'name' => 'Citra'],
+            $orgUnits,
+        );
+
+        $this->assertSame('12345', $resolved->nip);
+        $this->assertSame('Citra', $resolved->name); // hris_employee() null (belum dikonfigurasi) -> fallback ke klaim
+        $this->assertSame($department->id, $resolved->department_id);
+        $this->assertArrayNotHasKey('division_id', $resolved->getAttributes());
+    }
+
+    public function test_missing_column_on_guarded_model_is_dropped_via_schema_check(): void
+    {
+        // TestGuardedUser TIDAK deklarasikan $fillable (pakai $guarded = []) dan skema
+        // tabelnya TIDAK punya kolom 'nip' sama sekali — mewakili sistem yang tidak
+        // menyimpan NIP. Pengisian bawaan harus tetap sukses, kolom 'nip' diabaikan
+        // lewat pengecekan skema (Schema::hasColumn), bukan cuma pengecekan $fillable.
+        config([
+            'keycloak-sso.user.model' => TestGuardedUser::class,
+            'keycloak-sso.user.provision' => true,
+            'keycloak-sso.user.fill' => null,
+        ]);
+
+        $resolved = (new UserResolver)->resolve(['sub' => 'sub-guarded', 'nip' => '99999', 'name' => 'Dewi', 'email' => 'dewi@x.com']);
+
+        $this->assertSame('Dewi', $resolved->name);
+        $this->assertSame('dewi@x.com', $resolved->email);
+        $this->assertArrayNotHasKey('nip', $resolved->getAttributes());
+    }
+}
