@@ -11,4 +11,9 @@ class TestUser extends Authenticatable
     protected $fillable = ['name', 'email', 'keycloak_sub', 'is_active', 'department_id', 'nip'];
 
     public $timestamps = false;
+
+    public function profile()
+    {
+        return $this->hasOne(TestUserProfile::class, 'user_id');
+    }
 }

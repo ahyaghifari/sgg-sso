@@ -7,12 +7,14 @@ return [
     | Kredensial Client Keycloak
     |--------------------------------------------------------------------------
     |
-    | Gunakan client baru di Keycloak yang khusus dibuat untuk aplikasi ini
-    | (jangan menggunakan client admin/HRIS). Aktifkan Standard Flow dan
-    | Client Authentication (confidential client). Client scope yang
-    | digunakan client ini wajib memiliki mapper "Group Membership" (Full
-    | Group Path diaktifkan), karena inilah yang menyisipkan claim `groups`
-    | ke dalam token dan dibaca oleh OrgResolver di bawah.
+    | Buat client BARU di Keycloak khusus aplikasi ini — jangan pakai client
+    | admin/HRIS. Aktifkan Standard Flow + Client Authentication.
+    |
+    | Opsional: kalau mau baca role user (lihat 'roles' di bawah), client
+    | scope-nya perlu mapper "Client Roles" dengan "Add to userinfo" ON.
+    | Kalau mau fallback unit organisasi lewat grup Keycloak (jarang
+    | terpakai — lihat 'org_levels'), perlu juga mapper "Group Membership"
+    | dengan "Add to userinfo" ON. Tanpa keduanya, login tetap jalan normal.
     |
     */
     'client_id' => env('KEYCLOAK_CLIENT_ID'),
@@ -38,56 +40,42 @@ return [
     | User Lokal
     |--------------------------------------------------------------------------
     |
-    | 'match_by' menentukan PRIORITAS pencarian user lokal berdasarkan claim
-    | token — URUTAN ARRAY = URUTAN PRIORITAS. Field pertama yang punya nilai
-    | DAN ketemu user-nya yang dipakai; field sesudahnya tidak dicoba lagi.
-    | Host app tentukan sendiri mau utamakan NIP atau email cukup dengan
-    | mengubah urutan ini, tidak ada default tersembunyi yang memaksa salah
-    | satu.
+    | match_by: urutan field yang dicoba buat CARI user lokal yang sudah ada.
+    | Urutan = prioritas — entri pertama yang cocok yang dipakai, sisanya
+    | tidak dicoba lagi. Field yang kolomnya tidak ada di tabel otomatis
+    | dilewati (aman, tidak error), jadi boleh dibiarkan default walau
+    | sistemmu tidak simpan NIP.
+    |   - keycloak_sub → dari token, paling pasti (sudah pernah login).
+    |   - nip           → dari token juga (fallback ke preferred_username),
+    |                      buat user lama yang belum pernah login SSO.
+    |   - email         → paling lemah, taruh terakhir.
     |
-    | Default: ['keycloak_sub', 'nip', 'email'].
-    | - 'keycloak_sub' → $claims['sub']. Paling pasti (sudah pernah login &
-    |   ke-link sebelumnya) — dicoba duluan.
-    | - 'nip' → $claims['nip'], fallback $claims['preferred_username'] kalau
-    |   'nip' kosong (tergantung mapping client scope Keycloak). Kunci bisnis
-    |   yang stabil, dipakai buat user yang sudah terdaftar SEBELUM pernah
-    |   login SSO (mis. migrasi data lama) tapi belum ke-link ke Keycloak.
-    | - 'email' → $claims['email']. Paling lemah (bisa beda/berubah), taruh
-    |   TERAKHIR kecuali email memang kunci identitas utama di sistemmu.
+    | Entrinya boleh juga Closure(array $claims, string $modelClass): ?Model
+    | — dipakai kalau NIP/kolom lain disimpan di tabel LAIN yang relasi ke
+    | user (bukan kolom langsung di tabel user), mis.:
     |
-    | Field lain di luar 'keycloak_sub'/'nip' dicari langsung pada $claims
-    | dengan nama yang sama (mis. 'username').
+    | fn (array $claims, string $modelClass) =>
+    |     $modelClass::whereHas('profile', fn ($q) => $q->where('nip', $claims['nip'] ?? null))->first(),
     |
-    | 'provision' bernilai true secara default: user yang belum terdaftar
-    | otomatis dibuat saat login SSO pertama kali. Set ke false apabila
-    | sistem mengharuskan user sudah terdaftar lebih dulu (login ditolak
-    | apabila tidak ditemukan, tidak ada data yang dibuat otomatis).
+    | provision: true (default) = user baru otomatis dibuat kalau belum
+    | ketemu. false = login ditolak kalau user belum terdaftar.
     |
-    | 'fill' bersifat opsional. Apabila tidak diisi, digunakan pengisian
-    | bawaan yang mengambil nama/email dari HRIS lewat helper
-    | hris_employee($nip) (fallback ke claim token apabila HRIS tidak
-    | dapat diakses) dan mengisi kolom unit organisasi mengikuti konvensi
-    | `{level}_id`, dengan `level` diambil dari key 'level' pada
-    | 'org_levels' di bawah (mis. 'department' menjadi kolom
-    | 'department_id') — BUKAN ditebak dari nama model, karena nama
-    | model/tabel bisa berbeda-beda antar sistem. Kolom yang tidak ada pada
-    | model akan diabaikan otomatis. Isi 'fill' sendiri apabila konvensi
-    | `{level}_id` tidak sesuai dengan skema aplikasi. Contoh (dengan
-    | $orgUnits diakses lewat KEY 'level', bukan nama kelas model):
+    | fill: opsional. Kosongkan kalau mau pakai pengisian bawaan (ambil
+    | nama/email dari HRIS via hris_employee(), isi kolom unit organisasi
+    | `{level}_id` — level-nya dari 'org_levels' di bawah). Isi sendiri
+    | kalau nama kolommu beda dari konvensi itu. Contoh:
     |
     | 'fill' => function (array $claims, array $orgUnits): array {
     |     $nip = $claims['nip'] ?? $claims['preferred_username'];
-    |     $employee = hris_employee($nip); // null jika HRIS_API belum dikonfigurasi atau NIP tidak ditemukan
+    |     $employee = hris_employee($nip); // null kalau HRIS_API_* kosong / NIP tidak ditemukan
     |
     |     return [
     |         'nip' => $nip,
-    |         'name' => $employee['name'] ?? $claims['name'] ?? $nip, // fallback ke klaim jika HRIS tidak dapat diakses
+    |         'name' => $employee['name'] ?? $claims['name'] ?? $nip,
     |         'email' => $employee['email'] ?? $claims['email'] ?? null,
+    |         // $orgUnits diakses via key 'level' (bukan nama kelas model)
     |         'department_id' => $orgUnits['department']->first()?->id,
     |         'division_id' => $orgUnits['division']->first()?->id,
-    |         // Sub-divisi hanya terisi apabila grup Keycloak user mencapai level tersebut
-    |         // dan 'org_levels' di bawah memang mengonfigurasi level 'sub_division'.
-    |         'sub_division_id' => $orgUnits['sub_division']->first()?->id,
     |     ];
     | },
     |
@@ -97,22 +85,20 @@ return [
         'sub_column' => 'keycloak_sub',
         'match_by' => ['keycloak_sub', 'nip', 'email'],
         'provision' => true,
-        'fill' => null, // Closure(array $claims, array $orgUnits): array — opsional, null memakai pengisian bawaan (lihat komentar di atas)
-        'active_check' => null, // Closure(Model $user): bool — null berarti selalu diizinkan
+        'fill' => null, // Closure(array $claims, array $orgUnits): array — kosongkan buat pengisian bawaan
+        'active_check' => null, // Closure(Model $user): bool — null = selalu boleh login
     ],
 
     /*
     |--------------------------------------------------------------------------
-    | Direktori Karyawan HRIS (digunakan oleh hris_employee() / HrisDirectoryClient)
+    | Direktori Karyawan HRIS
     |--------------------------------------------------------------------------
     |
-    | Merujuk ke endpoint HRIS Api\Integrasi\EmployeeDirectoryController,
-    | yaitu sumber resmi data nama, email, dan unit organisasi karyawan
-    | berdasarkan NIP, yang digunakan oleh config('user.fill') di atas.
-    | Autentikasi menggunakan Bearer token yang unik per aplikasi konsumen —
-    | dibuat dan dikelola oleh tim HRIS melalui panel Filament
-    | /keycloak (menu "Aplikasi Terhubung"), termasuk untuk melakukan rotasi
-    | token sewaktu-waktu tanpa memerlukan proses deploy ulang.
+    | Sumber utama nama/email/unit organisasi resmi karyawan (helper
+    | hris_employee($nip)). Token dibuat lewat panel HRIS /keycloak →
+    | Aplikasi Terhubung — bisa digenerate ulang kapan saja tanpa deploy.
+    | Kosongkan kalau sistemmu tidak butuh data ini (fill sendiri, atau
+    | provision = false).
     |
     */
     'hris_directory' => [
@@ -122,36 +108,21 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | Level Unit Organisasi (Departemen, Divisi, dan seterusnya)
+    | Level Unit Organisasi (Departemen, Divisi, dst.)
     |--------------------------------------------------------------------------
     |
-    | Setiap baris merepresentasikan satu model/level organisasi, dengan TIGA
-    | key: 'model' (kelas Eloquent), 'code_column' (kolom kode), dan 'level'
-    | (WAJIB diisi — string bebas seperti 'department', 'division',
-    | 'sub_division', dipakai sebagai key hasil OrgResolver dan acuan
-    | pengisian bawaan UserResolver). 'level' sengaja TIDAK ditebak dari
-    | nama kelas model, karena nama model/tabel bisa berbeda-beda antar
-    | sistem (mis. App\Models\Department, App\Models\Unit, atau
-    | App\Models\Departemen bisa sama-sama merepresentasikan level
-    | 'department') — 'level' adalah kosakata semantik yang tetap konsisten
-    | terlepas dari penamaan itu.
+    | Satu baris = satu level. 3 key per baris:
+    |   - model        → kelas Eloquent-nya (bebas nama apa saja).
+    |   - code_column   → kolom yang isinya kode unit (harus cocok persis
+    |                     dengan kode dari HRIS, lihat /publik/unit-organisasi).
+    |   - level         → WAJIB diisi, string bebas ('department', 'division',
+    |                     'sub_division', ...). Ini KUNCI-nya, bukan nama
+    |                     model — harus sama persis dengan key 'org_unit'
+    |                     dari respons hris_employee() (department/division/
+    |                     sub_division), supaya kecocokan otomatis kepakai.
     |
-    | OrgResolver mencocokkan SELURUH segmen path grup Keycloak (bukan
-    | hanya segmen terakhir) terhadap SETIAP model yang dikonfigurasi di
-    | bawah ini, sehingga urutan array tidak perlu selaras dengan kedalaman
-    | path dan tetap aman meskipun kedalaman struktur organisasi berbeda
-    | antar cabang. Kolom kode ('code_column') harus cocok persis dengan
-    | nama teknis grup Keycloak (bukan nama tampilan) — lihat konvensi
-    | penamaan kode pada README.
+    | Boleh isi 1 baris saja kalau cuma butuh 1 level (mis. Divisi doang).
     |
-    | Resolusi hingga level Sub Divisi didukung sepenuhnya — struktur HRIS
-    | sendiri terdiri atas tiga level (Departemen > Divisi > Sub Divisi,
-    | lihat /publik/unit-organisasi). Tambahkan baris ketiga apabila aplikasi
-    | memerlukan granularitas tersebut. Ketiga level tidak wajib digunakan
-    | sekaligus — aplikasi yang hanya memerlukan Departemen cukup
-    | mengonfigurasi satu baris saja.
-    |
-    | Contoh:
     | 'org_levels' => [
     |     ['model' => \App\Models\Department::class, 'code_column' => 'keycloak_code', 'level' => 'department'],
     |     ['model' => \App\Models\Division::class,   'code_column' => 'keycloak_code', 'level' => 'division'],
@@ -166,16 +137,15 @@ return [
     | Role (Keycloak Client Roles)
     |--------------------------------------------------------------------------
     |
-    | Dibaca dari claim `resource_access.<client_id>.roles` pada access
-    | token. Role di-assign pada GRUP di Keycloak Admin Console (bukan di
-    | sini) — lihat README. Role disimpan ke session dan dapat diperiksa
-    | melalui helper `keycloak_has_role('nama-role')` atau event
+    | Dibaca dari claim resource_access.<client_id>.roles. Role di-assign ke
+    | GRUP di Keycloak Admin Console (bukan di sini) — lihat README. Dapat
+    | diperiksa lewat helper keycloak_has_role('nama-role') atau event
     | KeycloakLoginSucceeded.
     |
     */
     'roles' => [
         'enabled' => true,
-        'client_id' => null, // null berarti menggunakan 'client_id' di atas
+        'client_id' => null, // null = pakai 'client_id' di atas
     ],
 
 ];

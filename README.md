@@ -134,11 +134,17 @@ cocok tanpa perlu pemetaan tambahan.
     'model' => \App\Models\User::class,
     'sub_column' => 'keycloak_sub',      // kolom penghubung, mengikuti pola users.keycloak_sub pada HRIS
 
-    // Urutan = prioritas. Field pertama yang punya nilai DAN ketemu user-nya yang menang.
+    // Urutan = prioritas. Entri pertama yang punya nilai DAN ketemu user-nya yang menang.
     // 'nip' otomatis fallback ke claim 'preferred_username' kalau claim 'nip' kosong.
     // Taruh field paling dipercaya duluan — mis. kalau email bisa berubah/tidak unik di
     // sistemmu, jangan taruh sebelum 'nip'.
     'match_by' => ['keycloak_sub', 'nip', 'email'],
+
+    // Kalau NIP (atau field lain) disimpan di TABEL LAIN yang relasi ke user (bukan
+    // kolom langsung di tabel user), ganti entrinya jadi closure:
+    // 'match_by' => ['keycloak_sub', fn (array $claims, string $modelClass) =>
+    //     $modelClass::whereHas('profile', fn ($q) => $q->where('nip', $claims['nip'] ?? null))->first(),
+    // ],
 
     'provision' => true,                  // default: user baru dibuat otomatis apabila belum terdaftar; false = login ditolak jika belum ada
 
@@ -274,7 +280,10 @@ lama itu (biasanya `nip`) ada di array-nya, dan taruh di posisi yang
 diprioritaskan. Default package: `['keycloak_sub', 'nip', 'email']`. Kalau
 sistemmu tidak simpan `nip` sama sekali, pastikan `email` di data lama
 sama persis dengan email di Keycloak — beda dikit (typo/domain lama) juga
-gagal cocok.
+gagal cocok. Kalau NIP-nya ada tapi di **tabel lain** (bukan kolom
+langsung di tabel user, mis. tabel profil kepegawaian terpisah), `match_by`
+string biasa tidak bisa menjangkau itu — ganti entrinya jadi closure
+(lihat contoh di [4.1](#41-user-lokal)).
 
 **"We are sorry... Invalid redirect uri" saat KLIK LOGIN / setelah isi form login Keycloak**
 → URL `redirect_uri` yang dikirim aplikasi tidak cocok persis dengan
@@ -347,7 +356,7 @@ composer install
 vendor/bin/phpunit
 ```
 
-Terdapat 26 pengujian (`OrgResolverTest`, `UserResolverTest`,
+Terdapat 28 pengujian (`OrgResolverTest`, `UserResolverTest`,
 `HrisDirectoryClientTest`) yang dijalankan menggunakan Orchestra Testbench
 dan SQLite in-memory, tanpa memerlukan instans Keycloak sungguhan.
 

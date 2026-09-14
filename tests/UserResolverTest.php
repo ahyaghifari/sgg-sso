@@ -8,6 +8,7 @@ use Syifa\KeycloakSso\Tests\Fixtures\TestDepartment;
 use Syifa\KeycloakSso\Tests\Fixtures\TestDivision;
 use Syifa\KeycloakSso\Tests\Fixtures\TestGuardedUser;
 use Syifa\KeycloakSso\Tests\Fixtures\TestUser;
+use Syifa\KeycloakSso\Tests\Fixtures\TestUserProfile;
 
 class UserResolverTest extends TestCase
 {
@@ -200,6 +201,46 @@ class UserResolverTest extends TestCase
         ]);
 
         $resolved = (new UserResolver)->resolve(['sub' => 'sub-baru', 'nip' => '12345', 'email' => 'eka@x.com']);
+
+        $this->assertSame($user->id, $resolved->id);
+    }
+
+    public function test_match_by_closure_can_look_up_via_related_model(): void
+    {
+        // NIP di sini TIDAK ada di tabel kc_users sama sekali — disimpan di
+        // kc_user_profiles (relasi hasOne). Kolom string biasa tidak bisa menjangkau
+        // ini, jadi match_by pakai closure yang query lewat relasi.
+        $user = TestUser::create(['name' => 'Fajar', 'email' => 'fajar@x.com']);
+        TestUserProfile::create(['user_id' => $user->id, 'nip' => '55555']);
+
+        config(['keycloak-sso.user.match_by' => [
+            'keycloak_sub',
+            function (array $claims, string $modelClass) {
+                $nip = $claims['nip'] ?? null;
+
+                return $nip
+                    ? $modelClass::whereHas('profile', fn ($q) => $q->where('nip', $nip))->first()
+                    : null;
+            },
+        ]]);
+
+        $resolved = (new UserResolver)->resolve(['sub' => 'sub-baru', 'nip' => '55555']);
+
+        $this->assertSame($user->id, $resolved->id);
+        // Closure ketemu -> tetap lanjut ke logic link keycloak_sub seperti biasa.
+        $this->assertSame('sub-baru', $resolved->fresh()->keycloak_sub);
+    }
+
+    public function test_match_by_closure_returning_null_falls_through_to_next_entry(): void
+    {
+        $user = TestUser::create(['name' => 'Gita', 'email' => 'gita@x.com']);
+
+        config(['keycloak-sso.user.match_by' => [
+            fn (array $claims, string $modelClass) => null, // closure ini sengaja selalu gagal
+            'email',
+        ]]);
+
+        $resolved = (new UserResolver)->resolve(['sub' => 'sub-x', 'email' => 'gita@x.com']);
 
         $this->assertSame($user->id, $resolved->id);
     }

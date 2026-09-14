@@ -2,6 +2,7 @@
 
 namespace Syifa\KeycloakSso\Support;
 
+use Closure;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Schema;
 use Symfony\Component\HttpKernel\Exception\HttpException;
@@ -17,6 +18,11 @@ use Symfony\Component\HttpKernel\Exception\HttpException;
  * bawaan (defaultFill()) yang mengambil nama/email dari HRIS dan mengisi
  * kolom unit organisasi mengikuti konvensi `{level}_id` — lihat catatan
  * pada defaultFill().
+ *
+ * Entri 'match_by' pada config biasanya nama kolom di tabel model utama,
+ * tapi boleh juga Closure(array $claims, string $modelClass): ?Model —
+ * dipakai kalau data pencocokannya (mis. NIP) disimpan di tabel/model lain
+ * yang relasi ke user, bukan di tabel user itu sendiri.
  */
 class UserResolver
 {
@@ -36,10 +42,24 @@ class UserResolver
         $user = null;
         $table = (new $modelClass)->getTable();
 
-        // Urutan array 'match_by' = urutan prioritas: field pertama yang punya nilai DAN
-        // ketemu user-nya yang menang, sisanya tidak dicoba. Host app menentukan sendiri
-        // NIP atau email yang diutamakan cukup dengan mengatur urutan ini di config.
+        // Urutan array 'match_by' = urutan prioritas: entri pertama yang ketemu user-nya
+        // yang menang, sisanya tidak dicoba. Host app menentukan sendiri NIP atau email
+        // yang diutamakan cukup dengan mengatur urutan ini di config.
         foreach (($config['match_by'] ?? [$subColumn]) as $field) {
+            // Entri closure: data pencocokannya BUKAN kolom langsung di tabel model utama
+            // (mis. NIP disimpan di tabel/model lain yang relasi ke user, bukan di tabel
+            // user itu sendiri) — host app tulis sendiri cara carinya, dikasih $claims &
+            // nama kelas model, balikin Model kalau ketemu atau null kalau tidak.
+            if ($field instanceof Closure) {
+                $user = $field($claims, $modelClass);
+
+                if ($user) {
+                    break;
+                }
+
+                continue;
+            }
+
             // Field yang kolomnya memang tidak ada di tabel (mis. 'nip' di sistem yang
             // tidak menyimpan NIP) dilewati, BUKAN bikin query error "unknown column" —
             // sama filosofinya dengan onlyExistingColumns() di defaultFill().

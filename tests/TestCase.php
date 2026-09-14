@@ -61,5 +61,13 @@ abstract class TestCase extends Orchestra
             $table->string('email')->nullable();
             $table->string('keycloak_sub')->nullable();
         });
+
+        // NIP disimpan di sini, TERPISAH dari kc_users — mewakili sistem dengan tabel
+        // profil/kepegawaian sendiri (relasi hasOne ke user), bukan kolom langsung di users.
+        Schema::create('kc_user_profiles', function ($table) {
+            $table->id();
+            $table->unsignedBigInteger('user_id');
+            $table->string('nip')->nullable();
+        });
     }
 }
