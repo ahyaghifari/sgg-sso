@@ -166,11 +166,13 @@ cocok tanpa perlu pemetaan tambahan.
 ```
 
 > **NIP bersifat opsional** — tidak semua sistem konsumen menyimpan kolom
-> `nip`. Pengisian bawaan tetap mencoba mengisinya, tetapi hasilnya
-> disaring otomatis sebelum di-`create()` (lewat `$fillable` model, atau
-> `Schema::hasColumn()` kalau model memakai `$guarded`) — sistem yang
-> tidak punya kolom `nip` tidak perlu konfigurasi tambahan apa pun, kolom
-> itu otomatis diabaikan.
+> `nip`. Aman dibiarkan default (`match_by` termasuk `'nip'`) walau
+> tabelnya tidak punya kolom itu sama sekali: baik saat MENCARI user
+> (`match_by`) maupun saat MEMBUAT user baru (`defaultFill()`), package
+> cek dulu ke skema tabel (`Schema::hasColumn()`) sebelum menyentuh kolom
+> `nip` — kalau tidak ada, field itu dilewati diam-diam (bukan
+> `QueryException` "unknown column" ataupun `MassAssignmentException`).
+> Tidak perlu konfigurasi tambahan apa pun.
 
 ### 4.2 Direktori karyawan HRIS
 
@@ -345,7 +347,7 @@ composer install
 vendor/bin/phpunit
 ```
 
-Terdapat 25 pengujian (`OrgResolverTest`, `UserResolverTest`,
+Terdapat 26 pengujian (`OrgResolverTest`, `UserResolverTest`,
 `HrisDirectoryClientTest`) yang dijalankan menggunakan Orchestra Testbench
 dan SQLite in-memory, tanpa memerlukan instans Keycloak sungguhan.
 

@@ -186,4 +186,21 @@ class UserResolverTest extends TestCase
         $this->assertSame('dewi@x.com', $resolved->email);
         $this->assertArrayNotHasKey('nip', $resolved->getAttributes());
     }
+
+    public function test_match_by_skips_nip_when_column_does_not_exist_instead_of_erroring(): void
+    {
+        // TestGuardedUser TIDAK punya kolom 'nip' sama sekali di skemanya. match_by yang
+        // menyertakan 'nip' harus dilewati diam-diam, BUKAN memicu query error
+        // "unknown column" — user tetap harus ketemu lewat field berikutnya (email).
+        $user = TestGuardedUser::create(['name' => 'Eka', 'email' => 'eka@x.com']);
+
+        config([
+            'keycloak-sso.user.model' => TestGuardedUser::class,
+            'keycloak-sso.user.match_by' => ['keycloak_sub', 'nip', 'email'],
+        ]);
+
+        $resolved = (new UserResolver)->resolve(['sub' => 'sub-baru', 'nip' => '12345', 'email' => 'eka@x.com']);
+
+        $this->assertSame($user->id, $resolved->id);
+    }
 }

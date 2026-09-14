@@ -34,11 +34,19 @@ class UserResolver
         $sub = $claims['sub'] ?? null;
 
         $user = null;
+        $table = (new $modelClass)->getTable();
 
         // Urutan array 'match_by' = urutan prioritas: field pertama yang punya nilai DAN
         // ketemu user-nya yang menang, sisanya tidak dicoba. Host app menentukan sendiri
         // NIP atau email yang diutamakan cukup dengan mengatur urutan ini di config.
         foreach (($config['match_by'] ?? [$subColumn]) as $field) {
+            // Field yang kolomnya memang tidak ada di tabel (mis. 'nip' di sistem yang
+            // tidak menyimpan NIP) dilewati, BUKAN bikin query error "unknown column" —
+            // sama filosofinya dengan onlyExistingColumns() di defaultFill().
+            if (! Schema::hasColumn($table, $field)) {
+                continue;
+            }
+
             $value = match (true) {
                 $field === $subColumn => $sub,
                 // NIP kadang cuma ada di claim 'preferred_username' (tergantung mapping
