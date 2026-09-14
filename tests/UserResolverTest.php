@@ -44,6 +44,58 @@ class UserResolverTest extends TestCase
         $this->assertSame('sub-new', $resolved->fresh()->keycloak_sub);
     }
 
+    public function test_matches_existing_user_by_nip(): void
+    {
+        // User terdaftar duluan (mis. migrasi data lama), belum pernah login SSO — belum
+        // ke-link keycloak_sub, dan emailnya beda dari yang di klaim Keycloak.
+        $user = TestUser::create(['name' => 'Ahya', 'email' => 'lama@x.com', 'nip' => '12345']);
+
+        config(['keycloak-sso.user.match_by' => ['keycloak_sub', 'nip', 'email']]);
+
+        $resolved = (new UserResolver)->resolve(['sub' => 'sub-baru', 'nip' => '12345', 'email' => 'beda@x.com']);
+
+        $this->assertSame($user->id, $resolved->id);
+        $this->assertSame('sub-baru', $resolved->fresh()->keycloak_sub);
+    }
+
+    public function test_matches_existing_user_by_nip_via_preferred_username_fallback(): void
+    {
+        // Sebagian mapping client scope Keycloak taruh NIP di claim 'preferred_username',
+        // bukan claim 'nip' terpisah — harus tetap kepakai buat matching.
+        $user = TestUser::create(['name' => 'Ahya', 'nip' => '12345']);
+
+        config(['keycloak-sso.user.match_by' => ['nip']]);
+
+        $resolved = (new UserResolver)->resolve(['sub' => 'sub-x', 'preferred_username' => '12345']);
+
+        $this->assertSame($user->id, $resolved->id);
+    }
+
+    public function test_match_by_order_decides_priority_when_multiple_fields_could_match(): void
+    {
+        // Dua user beda: satu sudah ke-link keycloak_sub, satu lagi cuma cocok by NIP.
+        // Klaim login ini punya sub yang cocok user A DAN nip yang (kalau match_by-nya
+        // taruh nip duluan) bisa cocok user B — 'keycloak_sub' harus menang karena
+        // urutannya lebih dulu di match_by, bukan user B.
+        $userA = TestUser::create(['name' => 'A', 'keycloak_sub' => 'sub-a', 'nip' => '999']);
+        TestUser::create(['name' => 'B', 'nip' => '111']);
+
+        config(['keycloak-sso.user.match_by' => ['keycloak_sub', 'nip']]);
+
+        $resolved = (new UserResolver)->resolve(['sub' => 'sub-a', 'nip' => '111']);
+
+        $this->assertSame($userA->id, $resolved->id);
+    }
+
+    public function test_package_default_match_by_includes_nip_between_sub_and_email(): void
+    {
+        // Sanity check config bawaan package (bukan override defineEnvironment() di kelas
+        // ini) — pastikan NIP benar-benar termasuk secara default, bukan cuma opsional.
+        $default = (require __DIR__ . '/../config/keycloak-sso.php')['user']['match_by'];
+
+        $this->assertSame(['keycloak_sub', 'nip', 'email'], $default);
+    }
+
     public function test_unmatched_user_without_provision_is_rejected(): void
     {
         $this->expectException(HttpException::class);

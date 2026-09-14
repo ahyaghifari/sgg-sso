@@ -35,8 +35,18 @@ class UserResolver
 
         $user = null;
 
+        // Urutan array 'match_by' = urutan prioritas: field pertama yang punya nilai DAN
+        // ketemu user-nya yang menang, sisanya tidak dicoba. Host app menentukan sendiri
+        // NIP atau email yang diutamakan cukup dengan mengatur urutan ini di config.
         foreach (($config['match_by'] ?? [$subColumn]) as $field) {
-            $value = $field === $subColumn ? $sub : ($claims[$field] ?? null);
+            $value = match (true) {
+                $field === $subColumn => $sub,
+                // NIP kadang cuma ada di claim 'preferred_username' (tergantung mapping
+                // client scope di Keycloak), bukan claim 'nip' terpisah — sama fallback-nya
+                // dengan defaultFill() di bawah & KeycloakController HRIS sendiri.
+                $field === 'nip' => $claims['nip'] ?? $claims['preferred_username'] ?? null,
+                default => $claims[$field] ?? null,
+            };
 
             if (blank($value)) {
                 continue;

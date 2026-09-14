@@ -38,10 +38,25 @@ return [
     | User Lokal
     |--------------------------------------------------------------------------
     |
-    | 'match_by' menentukan urutan kolom yang dicoba untuk mencocokkan user
-    | lokal berdasarkan claim token. Nilai 'keycloak_sub' otomatis dipetakan
-    | ke $claims['sub']; nama kolom lain dicari langsung pada $claims
-    | (misalnya 'email', 'nip', atau 'preferred_username').
+    | 'match_by' menentukan PRIORITAS pencarian user lokal berdasarkan claim
+    | token — URUTAN ARRAY = URUTAN PRIORITAS. Field pertama yang punya nilai
+    | DAN ketemu user-nya yang dipakai; field sesudahnya tidak dicoba lagi.
+    | Host app tentukan sendiri mau utamakan NIP atau email cukup dengan
+    | mengubah urutan ini, tidak ada default tersembunyi yang memaksa salah
+    | satu.
+    |
+    | Default: ['keycloak_sub', 'nip', 'email'].
+    | - 'keycloak_sub' → $claims['sub']. Paling pasti (sudah pernah login &
+    |   ke-link sebelumnya) — dicoba duluan.
+    | - 'nip' → $claims['nip'], fallback $claims['preferred_username'] kalau
+    |   'nip' kosong (tergantung mapping client scope Keycloak). Kunci bisnis
+    |   yang stabil, dipakai buat user yang sudah terdaftar SEBELUM pernah
+    |   login SSO (mis. migrasi data lama) tapi belum ke-link ke Keycloak.
+    | - 'email' → $claims['email']. Paling lemah (bisa beda/berubah), taruh
+    |   TERAKHIR kecuali email memang kunci identitas utama di sistemmu.
+    |
+    | Field lain di luar 'keycloak_sub'/'nip' dicari langsung pada $claims
+    | dengan nama yang sama (mis. 'username').
     |
     | 'provision' bernilai true secara default: user yang belum terdaftar
     | otomatis dibuat saat login SSO pertama kali. Set ke false apabila
@@ -80,7 +95,7 @@ return [
     'user' => [
         'model' => env('KEYCLOAK_USER_MODEL', \App\Models\User::class),
         'sub_column' => 'keycloak_sub',
-        'match_by' => ['keycloak_sub', 'email'],
+        'match_by' => ['keycloak_sub', 'nip', 'email'],
         'provision' => true,
         'fill' => null, // Closure(array $claims, array $orgUnits): array — opsional, null memakai pengisian bawaan (lihat komentar di atas)
         'active_check' => null, // Closure(Model $user): bool — null berarti selalu diizinkan

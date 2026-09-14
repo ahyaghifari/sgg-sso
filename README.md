@@ -133,7 +133,13 @@ cocok tanpa perlu pemetaan tambahan.
 'user' => [
     'model' => \App\Models\User::class,
     'sub_column' => 'keycloak_sub',      // kolom penghubung, mengikuti pola users.keycloak_sub pada HRIS
-    'match_by' => ['keycloak_sub', 'email'],
+
+    // Urutan = prioritas. Field pertama yang punya nilai DAN ketemu user-nya yang menang.
+    // 'nip' otomatis fallback ke claim 'preferred_username' kalau claim 'nip' kosong.
+    // Taruh field paling dipercaya duluan — mis. kalau email bisa berubah/tidak unik di
+    // sistemmu, jangan taruh sebelum 'nip'.
+    'match_by' => ['keycloak_sub', 'nip', 'email'],
+
     'provision' => true,                  // default: user baru dibuat otomatis apabila belum terdaftar; false = login ditolak jika belum ada
 
     // Opsional. Apabila null, dipakai pengisian bawaan: nama/email diambil dari
@@ -260,6 +266,14 @@ Event::listen(\Syifa\KeycloakSso\Events\KeycloakLoginSucceeded::class, function 
 
 ## Troubleshooting
 
+**User yang sudah terdaftar duluan (sebelum pakai SSO) tidak ketemu / malah dibuatkan akun baru dobel**
+→ Cek `match_by` di config — pastikan field yang jadi kunci identitas user
+lama itu (biasanya `nip`) ada di array-nya, dan taruh di posisi yang
+diprioritaskan. Default package: `['keycloak_sub', 'nip', 'email']`. Kalau
+sistemmu tidak simpan `nip` sama sekali, pastikan `email` di data lama
+sama persis dengan email di Keycloak — beda dikit (typo/domain lama) juga
+gagal cocok.
+
 **"We are sorry... Invalid redirect uri" saat KLIK LOGIN / setelah isi form login Keycloak**
 → URL `redirect_uri` yang dikirim aplikasi tidak cocok persis dengan
 **Valid Redirect URIs** di client Keycloak. Bandingkan karakter per
@@ -331,7 +345,7 @@ composer install
 vendor/bin/phpunit
 ```
 
-Terdapat 21 pengujian (`OrgResolverTest`, `UserResolverTest`,
+Terdapat 25 pengujian (`OrgResolverTest`, `UserResolverTest`,
 `HrisDirectoryClientTest`) yang dijalankan menggunakan Orchestra Testbench
 dan SQLite in-memory, tanpa memerlukan instans Keycloak sungguhan.
 
